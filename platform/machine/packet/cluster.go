@@ -48,6 +48,10 @@ func (pc *cluster) NewMachine(userdata *conf.UserData) (platform.Machine, error)
 	var cons *console
 	var pcons packet.Console // need a nil interface value if unused
 	var device *packngo.Device
+
+	// no matter the final result of the provisioning, we remove the SSH key
+	defer pc.deleteKey()
+
 	// Do not shadow assignments to err (i.e., use a, err := something) in the for loop
 	// because the "continue" case needs to access the previous error to return it when the
 	// maximal number of retries is reached or to print it at the beginning of the loop.
@@ -125,9 +129,7 @@ func (pc *cluster) NewMachine(userdata *conf.UserData) (platform.Machine, error)
 		}
 
 		pc.AddMach(mach)
-
 		return mach, nil
-
 	}
 
 	return nil, err
@@ -142,4 +144,18 @@ func (pc *cluster) vmname() string {
 func (pc *cluster) Destroy() {
 	pc.BaseCluster.Destroy()
 	pc.flight.DelCluster(pc)
+}
+
+// deleteKey calls the API in order to delete the
+// provisioning API key - we only log in case of failure
+// failure of SSH key deletion should not make the test fails
+func (pc *cluster) deleteKey() {
+	keyID := pc.sshKeyID
+	if len(keyID) == 0 {
+		return
+	}
+
+	if err := pc.flight.api.DeleteKey(keyID); err != nil {
+		plog.Errorf("unable to delete key %s: %v\n", keyID, err)
+	}
 }

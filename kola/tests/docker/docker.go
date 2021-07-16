@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -53,6 +54,12 @@ type simplifiedDockerInfo struct {
 }
 
 func init() {
+	register.Register(&register.Test{
+		Run:         dockerSELinux,
+		ClusterSize: 1,
+		Name:        "docker.selinux",
+		Distros:     []string{"cl"},
+	})
 	register.Register(&register.Test{
 		Run:         dockerNetwork,
 		ClusterSize: 2,
@@ -180,7 +187,6 @@ systemd:
       [Service]
       Type=notify
       EnvironmentFile=-/run/flannel/flannel_docker_opts.env
-      Environment=DOCKER_OPTS=--selinux-enabled=false
 
       # the default is not to use systemd for cgroups because the delegate issues still
       # exists and systemd currently does not support the cgroup feature set required
@@ -586,7 +592,7 @@ func testDockerInfo(expectedFs string, c cluster.TestCluster) {
 	}
 
 	// Validations shared by all versions currently
-	if !hasSecurityOptions(info.SecurityOptions) {
+	if !reflect.DeepEqual(info.SecurityOptions, []string{"seccomp", "selinux", "cgroupns"}) {
 		c.Errorf("unexpected security options: %+v", info.SecurityOptions)
 	}
 
@@ -611,16 +617,48 @@ func testDockerInfo(expectedFs string, c cluster.TestCluster) {
 	}
 }
 
-// hasSecurityOptions strictly checks that at least one of
-// the Docker security option is enabled (seccomp, selinux).
-func hasSecurityOptions(opts []string) bool {
-	for _, opt := range opts {
-		switch opt {
-		case "selinux", "seccomp", "cgroupns":
-		default:
-			return false
-		}
+// dockerSELinux tests SELinux for Docker by running a container
+// in enforce mode and in permissive mode with a non-labelled file
+// and a labelled file
+func dockerSELinux(c cluster.TestCluster) {
+	m := c.Machines()[0]
+
+	var cmd string
+
+	cmd = `sudo mkdir /etc/misc && \
+docker run -v "/etc/misc:/opt" --rm busybox true`
+
+	// assert SELinux is in permissive mode
+	if err := c.MustSSH(m, "sudo setenforce 0"); err != nil {
+		c.Fatalf("unable to set permissive mode: %v", err)
 	}
 
-	return true
+	// create a directory to share and run docker command
+	if err := c.MustSSH(m, cmd); err != nil {
+		c.Fatalf("unable to run docker command: %v", err)
+	}
+
+	// switch SELinux to enforcing mode
+	if err := c.MustSSH(m, "sudo setenforce 1"); err != nil {
+		c.Fatalf("unable to set enforcing mode: %v", err)
+	}
+
+	// run docker command to assert it fails because of wrong labeling
+	if _, err := c.SSH(m, `docker run -v "/etc/misc:/opt" --rm busybox sh -c "echo world > /opt/hello"`); err == nil {
+		c.Fatalf("command should raise a permission error")
+	}
+
+	// run docker command with correct relabel action (z)
+	if err := c.MustSSH(m, `docker run -v "/etc/misc:/opt:z" --rm busybox sh -c "echo world > /opt/hello"`); err != nil {
+		c.Fatalf("unable to run docker command: %v", err)
+	}
+
+	out, err := c.SSH(m, "cat /etc/misc/hello")
+	if err != nil {
+		c.Fatalf("unable display file content: %v", err)
+	}
+
+	if string(out) != "world" {
+		c.Fatal("/etc/misc/hello should holds 'world'")
+	}
 }

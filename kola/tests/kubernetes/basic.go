@@ -54,6 +54,8 @@ func init() {
 				ClusterSize: 0,
 				Platforms:   []string{"gce", "do", "aws", "qemu", "azure"}, // TODO: fix packet, esx
 				Distros:     []string{"cl"},
+				// incompatible with docker >=20.10
+				ExcludeChannels: []string{"alpha"},
 			})
 		}
 	}

@@ -68,6 +68,8 @@ func init() {
 		Name:          "docker.oldclient",
 		Architectures: []string{"amd64"},
 		Distros:       []string{"cl"},
+		// incompatible with docker >=20.10
+		ExcludeChannels: []string{"alpha"},
 	})
 	register.Register(&register.Test{
 		Run:         dockerUserns,

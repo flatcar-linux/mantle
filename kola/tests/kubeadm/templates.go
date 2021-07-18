@@ -185,6 +185,14 @@ storage:
             hash:
               function: sha512
               sum: {{ .KubectlSum }}
+{{ if eq .CNI "cilium" }}
+    - path: {{ .DownloadDir }}/cilium.tar.gz
+      filesystem: root
+      mode: 0755
+      contents:
+        remote:
+          url: https://github.com/cilium/cilium-cli/releases/download/{{ .CiliumVersion }}/cilium-linux-amd64.tar.gz
+{{ end }}
     - path: /home/core/install.sh
       filesystem: root
       mode: 0755
@@ -280,6 +288,7 @@ etcd:
     {{ end }}
 EOF
 
+{{ if eq .CNI "calico" }}
 cat << EOF > calico.yaml
 # Source: https://docs.projectcalico.org/manifests/custom-resources.yaml
 apiVersion: operator.tigera.io/v1
@@ -298,6 +307,7 @@ spec:
         nodeSelector: all()
   flexVolumePath: /opt/libexec/kubernetes/kubelet-plugins/volume/exec/
 EOF
+{{ end }}
 
 {
     systemctl enable --quiet --now kubelet
@@ -307,8 +317,23 @@ EOF
     cp /etc/kubernetes/admin.conf /home/core/.kube/config
     chown -R core:core /home/core/.kube; chmod a+r /home/core/.kube/config;
 
+{{ if eq .CNI "calico" }}
     kubectl create -f https://docs.projectcalico.org/manifests/tigera-operator.yaml
     kubectl apply -f calico.yaml
+{{ end }}
+{{ if eq .CNI "flannel" }}
+    curl -sSL https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml > kube-flannel.yml
+    sed -i "s#10.244.0.0/16#{{ .PodSubnet }}#" kube-flannel.yml
+    kubectl apply -f kube-flannel.yml
+{{ end }}
+{{ if eq .CNI "cilium" }}
+    sudo tar -xf {{ .DownloadDir }}/cilium.tar.gz -C {{ .DownloadDir }}
+    /opt/bin/cilium install \
+        --config enable-endpoint-routes=true \
+        --config cluster-pool-ipv4-cidr={{ .PodSubnet }}
+    # --wait will wait for status to report success
+    /opt/bin/cilium status --wait
+{{ end }}
 } 1>&2
 
 

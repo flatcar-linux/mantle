@@ -33,12 +33,23 @@ import (
 )
 
 var (
+	// CNIs is the list of CNIs to deploy
+	// in the cluster setup
+	CNIs = []string{
+		"calico",
+		"flannel",
+		"cilium",
+	}
 	// params are used to render script templates
 	// Release is the kubernetes release version we want to use
 	// ReleaseVersion is the version of the kubelet service and kubeadm dropin
 	// TODO: when a new version of kubernetes will be tested, it would be nice
 	// to have a map[string]Release with Release struct holding the parameter below
 	params = map[string]interface{}{
+		// TODO: it's actually the CLI version
+		// we should pass the CLI and cilium version
+		// https://github.com/cilium/cilium-cli/issues/118
+		"CiliumVersion":  "v0.8.3",
 		"CNIVersion":     "v0.8.7",
 		"CRIctlVersion":  "v1.17.0",
 		"ReleaseVersion": "v0.4.0",
@@ -64,18 +75,23 @@ systemd:
 )
 
 func init() {
-	register.Register(&register.Test{
-		Name:             "kubeadm.base",
-		Distros:          []string{"cl"},
-		ExcludePlatforms: []string{"esx"},
-		Run:              kubeadmBaseTest,
-	})
+	for _, CNI := range CNIs {
+		register.Register(&register.Test{
+			Name:             fmt.Sprintf("kubeadm.%s.base", CNI),
+			Distros:          []string{"cl"},
+			ExcludePlatforms: []string{"esx"},
+			Run: func(c cluster.TestCluster) {
+				kubeadmBaseTest(c, CNI)
+			},
+		})
+	}
 }
 
 // kubeadmBaseTest asserts that the cluster is up and running
-func kubeadmBaseTest(c cluster.TestCluster) {
+func kubeadmBaseTest(c cluster.TestCluster, CNI string) {
 	board := kola.QEMUOptions.Board
 	params["Arch"] = strings.SplitN(board, "-", 2)[0]
+	params["CNI"] = CNI
 	kubectl, err := setup(c)
 	if err != nil {
 		c.Fatalf("unable to setup cluster: %v", err)
